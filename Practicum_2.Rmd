@@ -1,0 +1,774 @@
+---
+by: Ramzi Adil, Syed Hani Haider
+DO: Practicum II / Mine a Database
+
+---
+#IMPORTANT NOTE TO GRADERS!!!
+Please install the following libraries before running this notebook:
+1.) RSQLite
+2.) XML
+3.) ggplot2
+
+Here is a little code block for quick installation of the libraries, please uncomment each line and run it if you need to.
+```{r}
+#install.packages("RSQLite")
+#install.packages("XML")
+#install.packages("ggplot2")
+```
+
+##Setting up database and xml object
+In this code block we are connecting to a database file that already exists. Please change the fpath and dbfile on your end when you are grading to the appropriate database file and file path. 
+```{r}
+library("RSQLite")
+
+#this file is already in the folder
+dbfile= "practicum.db"
+dbcon <- dbConnect(RSQLite::SQLite(),paste0(dbfile))
+```
+
+In this codeblock, we are connecting to the xml_file that already exists. 
+Please change the path and xml_file variables on your end when you are grading to the appropriate database path and xml name. 
+```{r}
+library(XML)
+#file already in folder
+xml_file = "pubmed_sample.xml"
+fp = paste0(xml_file)
+
+# I now have the XML file as an XML obj
+xmlObj <- xmlParse(fp)
+```
+
+
+##Drop tables to make sure database is blank
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS articles
+
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS journal_issue 
+
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS journal
+
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS authors
+```
+
+Drop fact tables
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS article_author_fact_table
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS author_affiliation_fact_table
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS affiliation_tbl
+
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS article_author_fact_table
+
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS journal_concat_temp
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS final_facts 
+```
+
+Check to mak sure db is empty
+```{r}
+dbListTables(dbcon) # check that database only has the three empty tables
+                   # and not the birdstrikes data csv table which will be called please work in this file
+```
+
+##Question Part 1.) (5 pts) Create a normalized relational schema that contains the following entities/tables: Articles, Journals, Authors. Create appropriate primary and foreign keys. Where necessary, add surrogate keys. 
+
+##Create new tables 
+###Q1.1a.)For authors you should store last name, first name, initial, and affiliation.
+We have an authors table which store first, name, last name and initials. Later down the line we made an affiliation table and an author affiliation table, which act as junctions for us to know what affiliations a particular author has. This also reduces duplicity in the authors table as authors and affiliation is a many to many relationship.
+```{sql connection=dbcon}
+CREATE TABLE authors (
+	author_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	first_name TEXT NOT NULL,
+	last_name TEXT NOT NULL,
+	initials TEXT NOT NULL
+);
+```
+
+We created extra tables for affiliation and author affiliation, which act sort of like junction tables
+Create tables
+```{sql connection=dbcon}
+CREATE TABLE affiliation_tbl(
+	affil_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	affil_text TEXT
+);
+
+```
+
+```{sql connection=dbcon}
+CREATE TABLE author_affiliation_fact_table(
+	author_id_fact INTEGER,
+	affiliation_id INTEGER,
+	FOREIGN KEY (author_id_fact) REFERENCES authors(author_id),
+	FOREIGN KEY (affiliation_id) REFERENCES affiliation_tbl(affil_id)
+);
+```
+
+###Q1.1b)For journals store the journal name/title, volume, issue, and publication date.
+Please note that we created a journal issue table and journal table. Effectively splitting the journal table requested into two. So the journal issue table stores volume, issue, and publication data while the journal table stores the journal name and ISSN
+```{sql connection=dbcon}
+CREATE TABLE journal (
+	journal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	journal_name TEXT NOT NULL,
+	journal_ISSN TEXT
+);
+```
+
+```{sql connection=dbcon}
+CREATE TABLE journal_issue (
+	issue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	Journal_id INTEGER NOT NULL,
+	volume int,
+	issue int,
+	date_published date,
+	date_year INT,
+	date_month INT,
+	date_day INT,
+	FOREIGN KEY (journal_id) REFERENCES journal(journal_id)
+);
+```
+
+###Q1.1c.)For articles you should minimally store the article title (<ArticleTitle>) and date created (<DateCreated>). 
+In the table below: 
+article_title represents <ArticleTile> and article_DateFormat represents <DateCreated>
+
+
+```{sql connection=dbcon}
+CREATE TABLE articles(
+	articles_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	article_title TEXT,
+	journal_id INTEGER,
+	issue_id INTEGER,
+	article_DateFormat date,
+	year INT,
+	month INT,
+	day INT,
+	FOREIGN KEY (journal_id) REFERENCES journal(journal_id),
+  FOREIGN KEY (issue_id) REFERENCES journal_issue(issue_id)
+);
+```
+
+```{sql connection=dbcon}
+CREATE TABLE article_author_fact_table(
+	article_id_fact INTEGER,
+	author_id_fact INTEGER,
+	FOREIGN KEY (article_id_fact) REFERENCES articles(articles_id)
+	FOREIGN KEY (author_id_fact) REFERENCES authors(author_id)
+);
+```
+
+###Q1.1d) Include an image of an ERD showing your model in your R Notebook
+My Image:
+![alt text](https://i.ibb.co/Wgsp4zH/Database-Schema.png)
+
+Check to make sure the tables were created
+```{r}
+dbListTables(dbcon)
+```
+
+Let's start importing data
+```{r}
+#get all affiliations for every author
+for_affil_table = xpathSApply(xmlObj,"//AuthorList/Author")
+for_affil_table_df =  xmlToDataFrame(for_affil_table)
+for_affil_tbl_unique = unique(for_affil_table_df)
+for_affil_tbl_unique[order(for_affil_tbl_unique$LastName),]
+all_authors_attempt_unique = subset(for_affil_tbl_unique, select = -Affiliation)
+all_authors_attempt_unique = unique(all_authors_attempt_unique)
+all_authors_attempt_unique[order(all_authors_attempt_unique$LastName),]
+```
+
+Drop tables to make sure they don't exist
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS affil_temp
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS authors_temp
+```
+
+write these temporary tables into the database
+```{r}
+dbWriteTable(dbcon, name="affil_temp", value = for_affil_tbl_unique )
+```
+
+```{r}
+dbWriteTable(dbcon, name="authors_temp", value = all_authors_attempt_unique )
+```
+###Q1.2a) Realize the relational schema in SQLite (place the CREATE TABLE statements into SQL chunks in your R Notebook).
+We used the the publication date where pubmed
+Check that the temporary table is in the databse
+```{sql connection=dbcon}
+SELECT * FROM authors_temp
+```
+
+#Fill authors table
+```{sql connection=dbcon}
+INSERT INTO authors(first_name, last_name, initials)
+SELECT ForeName, LastName,Initials FROM authors_temp
+
+```
+
+Check authors table
+```{sql connection=dbcon}
+SELECT * FROM authors 
+```
+
+Remove temporary authors table
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS authors_temp
+
+```
+
+#Fill affiliation fact table
+```{sql connection=dbcon}
+INSERT INTO affiliation_tbl(affil_text)
+SELECT DISTINCT Affiliation FROM affil_temp
+
+```
+
+Check affiliation table filled
+```{sql connection=dbcon}
+SELECT * FROM affiliation_tbl
+```
+
+Create author affiliation fact table
+```{sql connection=dbcon}
+INSERT INTO author_affiliation_fact_table (author_id_fact, affiliation_id)
+SELECT a.author_id, af.affil_id
+FROM authors as a, (SELECT authors.author_id, affiliation_tbl.affil_id, affil_temp.Affiliation FROM affiliation_tbl, affil_temp, authors WHERE (affil_temp.Affiliation = affiliation_tbl.affil_text) AND (authors.last_name = affil_temp.LastName) and (authors.first_name = affil_temp.ForeName) AND (authors.initials = affil_temp.Initials)) as af
+WHERE (af.author_id = a.author_id)
+```
+
+```{sql connection=dbcon}
+SELECT * FROM author_affiliation_fact_table
+```
+
+Remove temporary affiliation table
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS affil_temp
+```
+
+Check fact table is filled
+```{sql connection=dbcon}
+SELECT * FROM author_affiliation_fact_table
+```
+
+Drop affil_temp table
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS affil_temp
+```
+
+## Working with xpath objects
+Get all journal_nodes and convert to a dataframe
+```{r}
+journal_nodes = xpathSApply(xmlObj,"//Journal")
+journal_df = xmlToDataFrame(journal_nodes)
+journal_df[order(journal_df$Title),]
+journal_df[order(journal_df$Title),]
+```
+
+Get all journal issue nodes and convert to a dataframe
+```{r}
+journal_issue_nodes = xpathSApply(xmlObj,"//Journal/JournalIssue")
+journal_issue_df = xmlToDataFrame(journal_issue_nodes)
+```
+
+###Q1.2b Use the appropriate tag for publication date. See this link (Links to an external site.) for information.
+WE DECIDED TO USE @PubStatus='pubmed' for date of publication. This is because all publications have this node and we do not have to worry about whether it is in print or online or not.
+```{r}
+journal_issue_pubdate = xpathSApply(xmlObj,"//PubmedData/History/*[@PubStatus='pubmed']")
+journal_issue_pubdate_df = xmlToDataFrame(journal_issue_pubdate)
+journal_issue_pubdate_df["DateFormat"] = paste(journal_issue_pubdate_df$Year, journal_issue_pubdate_df$Month, journal_issue_pubdate_df$Day,sep="-")
+journal_issue_pubdate_df
+```
+
+Get all article nodes and convert to dataframe
+```{r}
+article_titles = xpathSApply(xmlObj,"//ArticleTitle")
+articled_dates = xpathSApply(xmlObj,"//DateCreated")
+article_title_df = xmlToDataFrame(article_titles)
+article_dates_df = xmlToDataFrame(articled_dates)
+article_full_temp = cbind(article_title_df,article_dates_df)
+article_full_temp["a_DateFormatted"] = paste(article_full_temp$Year,
+                                           article_full_temp$Month,
+                                           article_full_temp$Day, sep="-")
+# here we make the format of the date be Year-month-day
+names(article_full_temp)[names(article_full_temp) == "Year"] <- "a_Year"
+names(article_full_temp)[names(article_full_temp) == "Month"] <- "a_Month"
+names(article_full_temp)[names(article_full_temp) == "Day"] <- "a_Day"
+names(article_full_temp)[names(article_full_temp) == "text"] <- "article_title"
+```
+
+concatenate article df, journal df, journal issue df and check if correct
+```{r}
+journal_concat_df = cbind(journal_df,journal_issue_df,journal_issue_pubdate_df,article_full_temp)
+journal_concat_df
+```
+
+###Q1.3)  Extract and transform the data from the XML and then load into the appropriate tables in the database. You cannot (directly and solely) use xmlToDataFrame but instead must parse the XML node by node using a combination of node-by-node tree traversal and XPath. It is not feasible to use XPath to extract all journals, then all authors, etc. as some are missing and won't match up. You will need to iterate through the top-level nodes. While outside the scope of the course, this task could also be done through XSLT. Do not store duplicate authors or journals. For dates, you need to devise a conversion scheme, document your decision, and convert all dates to your encoding scheme.
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS journal_concat_temp
+```
+Write the concatenated table into the db as a temp
+```{r}
+dbWriteTable(dbcon, name="journal_concat_temp", value = journal_concat_df )
+```
+
+#Fill journal table
+```{sql connection=dbcon}
+INSERT INTO journal(journal_name, journal_ISSN)
+SELECT DISTINCT Title, ISSN FROM journal_concat_temp
+```
+
+Check that the journal table was filled correctly
+```{sql connection=dbcon}
+SELECT * FROM journal
+ORDER BY journal_id
+```
+
+Insert into journal issue table
+```{sql connection=dbcon}
+INSERT INTO journal_issue(Journal_id,volume,issue,date_published, date_year, date_month, date_day)
+select J.Journal_id,t.volume,t.issue,t.DateFormat,t.Year, t.Month, t.Day
+from journal as J, journal_concat_temp as t
+where J.journal_name=t.Title
+```
+
+check that the insert was correct
+```{sql connection=dbcon}
+SELECT * FROM journal_issue
+```
+
+Insert into articles table and check if correct
+```{sql connection=dbcon}
+INSERT INTO articles(article_title,journal_id, issue_id, article_DateFormat, year, month,day)
+select t.article_title, J.Journal_id, t.issue, t.a_DateFormatted, t.a_Year, t.a_Month, t.a_Day
+from journal as J, journal_concat_temp as t
+where J.journal_name =t.Title
+```
+
+```{sql connection=dbcon}
+SELECT * FROM articles
+```
+
+
+Some helper functions for the next code block
+```{r}
+change_season_column <- function(some_string_int){
+  some_int = as.integer(some_string_int)
+  if (some_int == 12) {
+    return ("Winter")
+  }
+  else if (some_int == 1 | some_int == 2){
+    return ("Winter")
+  }
+  else if (some_int >= 3 & some_int <= 5) {
+    return ("Spring")
+  }
+  else if (some_int >= 6 & some_int <= 8) {
+    return ("Summer") }
+  else {
+    return ("Fall")
+  }
+  
+}
+
+
+change_quarter_col <- function(some_int){
+  some_int = as.integer(some_int)
+  if (some_int >0 & some_int < 4) {
+    return (1)
+  }
+  else if (some_int > 3 & some_int < 7){
+    return (2)
+  }
+  else if (some_int > 6 & some_int < 10) {
+    return (3)
+  }
+  else {
+    return (4)
+  }
+ 
+}
+```
+
+
+```{r}
+query_fact = "SELECT i.Journal_id, a.articles_id, i.issue_id, a.article_DateFormat, i.date_published
+FROM articles as a, journal_issue as i
+WHERE a.journal_id = i.Journal_id 
+GROUP BY i.issue_id"
+df_for_fact = dbGetQuery(dbcon,query_fact)
+df_for_fact["Year_published"] = as.integer(format(as.Date(df_for_fact$date_published, format="%Y-%m-%d"),"%Y"))
+df_for_fact["month_published"] = as.integer(format(as.Date(df_for_fact$date_published, format="%Y-%m-%d"),"%m"))
+df_for_fact["season"] = format(as.Date(df_for_fact$date_published, format="%Y-%m-%d"),"%m")
+df_for_fact["Quarter"] = as.integer(format(as.Date(df_for_fact$date_published, format="%Y-%m-%d"),"%m"))
+
+rows_season = nrow(df_for_fact["season"])
+
+for (i in (1:rows_season)){
+  df_for_fact$season[i] = change_season_column(df_for_fact$season[i])
+}
+
+for (j in (1:rows_season)){
+  df_for_fact$Quarter[j] = change_quarter_col(df_for_fact$Quarter[j])
+}
+
+df_for_fact$date_diff <- abs(as.numeric((as.Date(as.character(df_for_fact$date_published), format="%Y-%m-%d")-
+                  as.Date(as.character(df_for_fact$article_DateFormat), format="%Y-%m-%d")), units="days"))
+
+df_base_for_fact = df_for_fact
+
+#the base table for creating the fact table for part 2
+df_base_for_fact
+                    
+```
+
+###Q2.) Create and populate a star schema with dimension and summary fact tables in either SQLite or MySQL. Each row in the fact table will represent one journal fact. It must include (minimally) the journal id, number of articles, and the average number of days elapsed between submission (date created in the XML) and date of publication in the journal by by year and by quarter. Add a few additional facts that are useful for future analytics. Populate the star schema via R. When building the schema, look a head to Part 3 as the schema is dependent on the eventual OLAP queries. Note that there is not a single way to create the fact table -- you may use dimension tables or you may collapse the dimensions into the fact table. Remember that the goal of fact tables is to make interactive analytical queries fast through pre-computation and storage -- more storage but better performance. This requires thinking and creativity -- there is not a single best solution.
+
+#IMPORTANT NOTE TO GRADER: during recitation, Prof. Schedlbauer stated that we do not need to create a separate databse/schema for this practicum. Even though the fact tables are usually stored in a separate schema, for this practicum we will be storing them in the same database/schema, but we do understand that it usually is in a separate schema.
+
+So our fact table will have the following dimensions/columns: journal id, number of articles, average number of days elapsed between article creation and issue publication, issue publication by year, issue publication by quarter, and issue publication by season
+
+We are creating these sub dimensions in R and will add it to the SQLite db
+
+Of course because we are looking for all possible permutations between year, quarter, and season, this may take many loops, so this may take some time to run, please be patient. On our machines it took about 10 seconds to run all the code below.
+
+Some helper functions
+```{r}
+make_template_fact <- function(){
+  df_to_upload = data.frame("J_id"=integer(), "num_articles" = integer(), "avg_num_days" = integer(), "issue_pub_year"=integer(), "issue_pub_quarter"=integer(), "issue_pub_season" = character())
+  return(df_to_upload)
+ 
+}
+
+get_by_year_only <- function(base_df){
+unique_jids = unique(base_df$Journal_id)
+template_fact = make_template_fact()
+
+for (i in 1:length(unique_jids)){
+  # get all rows based on j_id
+  jid_only_filtered_rows = (base_df$Journal_id == unique_jids[i])
+  
+  # get df of only filtered rows
+  extracted_df_by_jid_only = base_df[jid_only_filtered_rows,]
+  extracted_df_by_jid_only
+  
+  
+  #Get by year
+  unique_years = unique(extracted_df_by_jid_only$Year_published)
+  for (j in 1:length(unique_years)){
+    year_only_filtered_rows = (extracted_df_by_jid_only$Year_published == unique_years[j])
+    extracted_df_by_year_only = extracted_df_by_jid_only[year_only_filtered_rows,]
+    article_count = nrow(extracted_df_by_year_only)
+    avg_articles_days = mean(extracted_df_by_year_only$date_diff)
+    template_fact[nrow(template_fact) + 1,] = c(extracted_df_by_year_only[1,1], article_count,avg_articles_days,extracted_df_by_year_only[1,6],0,0)
+  }
+}
+# remove all na values
+template_fact <- na.omit(template_fact)
+return (template_fact)
+}
+```
+
+```{r}
+get_by_quarter_only <- function(base_df){
+unique_jids = unique(base_df$Journal_id)
+
+template_fact = make_template_fact()
+
+for (i in 1:length(unique_jids)){
+  # get all rows based on j_id
+  jid_only_filtered_rows = (base_df$Journal_id == unique_jids[i])
+  
+  # get df of only filtered rows
+  extracted_df_by_jid_only = base_df[jid_only_filtered_rows,]
+  
+  #get unique quarters
+  unique_quarters = unique(extracted_df_by_jid_only$Quarter)
+  for (j in 1:length(unique_quarters)){
+    quarter_only_filtered_rows = (extracted_df_by_jid_only$Quarter == unique_quarters[j])
+    extracted_df_by_quarter_only = extracted_df_by_jid_only[quarter_only_filtered_rows,]
+    article_count = nrow(extracted_df_by_quarter_only)
+    avg_articles_days = mean(extracted_df_by_quarter_only$date_diff)
+    template_fact[nrow(template_fact) + 1,] = c(extracted_df_by_quarter_only[1,1], article_count,avg_articles_days,0,extracted_df_by_quarter_only[1,9],0)
+  }
+  
+}
+template_fact <- na.omit(template_fact)
+return(template_fact)
+}
+```
+
+```{r}
+get_by_season_only <- function(base_df){
+  unique_jids = unique(base_df$Journal_id)
+  template_fact = make_template_fact()
+  
+  for (i in 1:length(unique_jids)){
+    # get all rows based on j_id
+    jid_only_filtered_rows = (base_df$Journal_id == unique_jids[i])
+  
+    # get df of only filtered rows
+    extracted_df_by_jid_only = base_df[jid_only_filtered_rows,]
+    
+    #get unique seasons
+    unique_seasons = unique(extracted_df_by_jid_only$season)
+    for (j in 1:length(unique_seasons)){
+      row_season_filtered = (extracted_df_by_jid_only$season == unique_seasons[j])
+      extracted_df_by_season_only = extracted_df_by_jid_only[row_season_filtered ,] 
+      article_count = nrow(extracted_df_by_season_only)
+      avg_articles_days = mean(extracted_df_by_season_only$date_diff)
+      template_fact[nrow(template_fact) + 1,] = c(extracted_df_by_season_only[1,1], article_count,avg_articles_days,0,0,extracted_df_by_season_only[1,8])
+      
+    }
+  }
+  template_fact <- na.omit(template_fact)
+  return (template_fact)
+}
+```
+
+```{r}
+get_by_year_and_q <- function(base_df){
+  unique_jids = unique(base_df$Journal_id)
+  template_fact = make_template_fact()
+  
+  for (i in 1:length(unique_jids)){
+    # get all rows based on j_id
+    jid_only_filtered_rows = (base_df$Journal_id == unique_jids[i])
+  
+    # get df of only filtered rows
+    extracted_df_by_jid_only = base_df[jid_only_filtered_rows,]
+    
+    unique_years = unique(extracted_df_by_jid_only$Year_published)
+    unique_quarters = unique(extracted_df_by_jid_only$Quarter)
+    for (j in 1:length(unique_years)){
+      for (k in 1: length(unique_quarters)){
+        row_yq_filtered = ((extracted_df_by_jid_only$Year_published == unique_years[j]) &
+                             extracted_df_by_jid_only$Quarter == unique_quarters[k])
+        extracted_by_yq = extracted_df_by_jid_only[row_yq_filtered,]
+        article_count = nrow(extracted_by_yq)
+        avg_articles_days = mean(extracted_by_yq$date_diff)
+        #temp = # j_id, num_article, avg_num_days, issue pub year, issue pub quarter, issue pub season,
+        #extracted = jid, articleid, issueid, articledate, issue date pub, year pub,month pub, season, quarter, diff
+        template_fact[nrow(template_fact) + 1,] = c(extracted_by_yq[1,1], article_count, avg_articles_days, extracted_by_yq[1,6], extracted_by_yq[1,9], 0)
+        
+      }
+    }
+  
+  }
+  template_fact <- na.omit(template_fact)
+  return (template_fact)
+}
+```
+
+```{r}
+get_by_year_and_s <- function(base_df){
+  unique_jids = unique(base_df$Journal_id)
+  template_fact = make_template_fact()
+  
+  for (i in 1:length(unique_jids)){
+    # get all rows based on j_id
+    jid_only_filtered_rows = (base_df$Journal_id == unique_jids[i])
+  
+    # get df of only filtered rows
+    extracted_df_by_jid_only = base_df[jid_only_filtered_rows,]
+    
+    unique_years = unique(extracted_df_by_jid_only$Year_published)
+    unique_seasons = unique(extracted_df_by_jid_only$season)
+    
+    for (j in 1:length(unique_years)){
+      for (k in 1: length(unique_seasons)){
+        row_ys_filtered = ((extracted_df_by_jid_only$Year_published == unique_years[j]) &
+                             extracted_df_by_jid_only$season == unique_seasons[k])
+        extracted_by_ys = extracted_df_by_jid_only[row_ys_filtered,]
+        article_count = nrow(extracted_by_ys)
+        avg_articles_days = mean(extracted_by_ys$date_diff)
+        #temp = # j_id, num_article, avg_num_days, issue pub year, issue pub quarter, issue pub season,
+        #extracted = jid, articleid, issueid, articledate, issue date pub, year pub,month pub, season, quarter, diff
+        template_fact[nrow(template_fact) + 1,] = c(extracted_by_ys[1,1], article_count, avg_articles_days, extracted_by_ys[1,6], 0, extracted_by_ys[1,8] )
+        
+        
+      }
+    }
+  }
+  template_fact <- na.omit(template_fact)
+  return (template_fact)
+}
+```
+
+```{r}
+get_by_q_and_s <- function(base_df){
+  unique_jids = unique(base_df$Journal_id)
+  template_fact = make_template_fact()
+  
+  for (i in 1:length(unique_jids)){
+    # get all rows based on j_id
+    jid_only_filtered_rows = (base_df$Journal_id == unique_jids[i])
+  
+    # get df of only filtered rows
+    extracted_df_by_jid_only = base_df[jid_only_filtered_rows,]
+  
+    unique_quarters = unique(extracted_df_by_jid_only$Quarter)
+    unique_seasons = unique(extracted_df_by_jid_only$season)
+    
+     for (j in 1:length(unique_quarters)){
+      for (k in 1: length(unique_seasons)){
+        row_qs_filtered = ((extracted_df_by_jid_only$Quarter == unique_quarters[j]) &
+                             extracted_df_by_jid_only$season == unique_seasons[k])
+        extracted_qs = extracted_df_by_jid_only[row_qs_filtered,]
+        article_count = nrow(extracted_qs)
+        avg_articles_days = mean(extracted_qs$date_diff)
+        #temp = # j_id, num_article, avg_num_days, issue pub year, issue pub quarter, issue pub season,
+        #extracted = jid, articleid, issueid, articledate, issue date pub, year pub,month pub, season, quarter, diff
+        template_fact[nrow(template_fact) + 1,] = c(extracted_qs[1,1], article_count, avg_articles_days, 0, extracted_qs[1,9], extracted_qs[1,8])
+      }
+     }
+  }
+  template_fact <- na.omit(template_fact)
+  return (template_fact)
+}
+```
+
+```{r}
+get_by_yqs <- function(base_df){
+  unique_jids = unique(base_df$Journal_id)
+  template_fact = make_template_fact()
+  
+  for (i in 1:length(unique_jids)){
+    # get all rows based on j_id
+    jid_only_filtered_rows = (base_df$Journal_id == unique_jids[i])
+  
+    # get df of only filtered rows
+    extracted_df_by_jid_only = base_df[jid_only_filtered_rows,]
+  
+    unique_years = unique(extracted_df_by_jid_only$Year_published)
+    unique_quarters = unique(extracted_df_by_jid_only$Quarter)
+    unique_seasons = unique(extracted_df_by_jid_only$season)
+    
+    for (j in 1:length(unique_years)){
+      for (k in 1:length(unique_quarters)){
+        for (l in 1:length(unique_seasons)){
+          row_yqs_filtered = ((extracted_df_by_jid_only$Year_published == unique_years[j]) &
+            (extracted_df_by_jid_only$Quarter == unique_quarters[k]) &
+            (extracted_df_by_jid_only$season == unique_seasons[l]))
+          extracted_yqs = extracted_df_by_jid_only[row_yqs_filtered,]
+          article_count = nrow(extracted_yqs)
+          avg_articles_days = mean(extracted_yqs$date_diff)
+          #temp = # j_id, num_article, avg_num_days, issue pub year, issue pub quarter, issue pub season,
+        #extracted = jid, articleid, issueid, articledate, issue date pub, year pub,month pub, season, quarter, diff
+        template_fact[nrow(template_fact) + 1,] = c(extracted_yqs[1,1], article_count, avg_articles_days, extracted_yqs[1,6], extracted_yqs[1,9], extracted_yqs[1,8])
+        }
+      }
+    }
+  }
+  template_fact <- na.omit(template_fact)
+  return(template_fact)
+}
+```
+
+Final fact table
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS final_facts
+
+```
+
+#Adding data to the final fact table
+```{r}
+library(ggplot2)
+dbWriteTable(dbcon, name="final_facts", value = get_by_season_only(df_base_for_fact),overwrite=TRUE,field.types=c(J_id='INTEGER',num_articles='INTEGER',avg_num_days='integer',issue_pub_year='integer',issue_pub_quarter='integer') )
+dbWriteTable(dbcon, name="final_facts", value = get_by_quarter_only(df_base_for_fact),append=TRUE)
+dbWriteTable(dbcon, name="final_facts", value = get_by_year_only(df_base_for_fact),append=TRUE  )
+dbWriteTable(dbcon, name="final_facts", value = get_by_year_and_s(df_base_for_fact),append=TRUE  )
+dbWriteTable(dbcon, name="final_facts", value = get_by_year_and_q(df_base_for_fact),append=TRUE  )
+dbWriteTable(dbcon, name="final_facts", value = get_by_q_and_s(df_base_for_fact),append=TRUE  )
+dbWriteTable(dbcon, name="final_facts", value = get_by_yqs(df_base_for_fact),append=TRUE  )
+
+```
+
+Grabbing data from fact table where we are only concerned about year and quarter
+#**Important node: notice that issu_pub_season = 0 for all. This is because we do not want any rows that are concerned about the season
+```{r}
+works = dbGetQuery(dbcon,'select * from final_facts where issue_pub_year > 1 and  issue_pub_quarter > 0 and issue_pub_season =0')
+works$J_id = as.character(as.integer(works$J_id))
+works$YQ <-paste0(works$issue_pub_year, "-Q", works$issue_pub_quarter)
+works
+```
+
+###Q3a.) Create a line graph that shows the average days elapsed between submission and publication for all journals per quarter
+Here we plot the the the average number of days elapsed vs. year-quarter for each journal
+We can see that for the journal with journal id = 13 that the avg days decrease as time increased.
+we can also see the same trend for journal id = 7
+We can see the opposite relationship for journal id = 4
+```{r}
+ggplot(works, aes(x = YQ, y = avg_num_days, colour = J_id, group = J_id)) +geom_line()
+```
+
+
+###Q3b.) Write queries using your data warehouse to populate a fictitious dashboard that would allow an analyst to explore whether the number of publications show a seasonal pattern.
+
+This is our own query. Here we grab a df where the data is grouped by year and quarter only, but this time all the journals are summed up. i.e. we sum up all the values of journals that published is the year 2011 and Q1 etc..
+```{r}
+works1 = dbGetQuery(dbcon,'select avg(avg_num_days) as avg_num_days,issue_pub_year,issue_pub_quarter from final_facts
+where issue_pub_year > 1 and  issue_pub_quarter > 0 and issue_pub_season =0 
+group by issue_pub_year, issue_pub_quarter')
+
+works1$issue_pub_year = as.character(as.integer(works1$issue_pub_year))
+works1$YQ <-paste0(works1$issue_pub_year, "-Q", works1$issue_pub_quarter)
+works1
+```
+
+We can see that in the year 2011, across all journals, the number of days elapsed between article creation and journal publication decreases as time went on. In the year 2013, it dips before rising. 
+```{r}
+ggplot(works1, aes(x = YQ, y = avg_num_days, colour = issue_pub_year, group = issue_pub_year)) +geom_line()
+```
+This is a scatterplot version of the line graph above, so that the we can ssee that in the year 2013
+```{r}
+ggplot(works1, aes(x = YQ, y = avg_num_days, colour = issue_pub_year, group = issue_pub_year)) +geom_point()
+```
+Here we are writing a query to see how many articles have been published by year, by journal. We can see in the year 2011 journal_id= 13 published 2 articles
+```{sql connection=dbcon}
+select J_id,issue_pub_year,num_articles from final_facts where issue_pub_year > 1 and  issue_pub_quarter = 0 and issue_pub_season = 0
+order by issue_pub_year
+
+```
+
+In this query we can see how many articles a journal has published across all quarters
+so Journal_id = 4, for all of quarter 4 publications published 2 articles
+```{sql connection=dbcon}
+select J_id,issue_pub_quarter,num_articles from final_facts where issue_pub_year = 0  and  issue_pub_quarter > 0 and issue_pub_season = 0
+order by issue_pub_year
+```
+
+Here we wrote a query to see how many articles were published by year and season, by each journal. So we see that Jounral_id = 13 published one article in the fall of 2011 and another article in the winter of 2011
+```{sql connection=dbcon}
+select J_id,issue_pub_year, issue_pub_season,num_articles from final_facts where issue_pub_year > 1 and  issue_pub_quarter = 0 and issue_pub_season > 0
+order by issue_pub_year
+```
+
+```{r}
+dbDisconnect(dbcon)
+```

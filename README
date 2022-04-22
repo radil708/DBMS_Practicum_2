@@ -11,7 +11,7 @@ High Level Requirements:
 
 	- Create a normalized relational schema that contains the following entities/tables: 
 		Articles, Journals, Authors
-	- Realize the relational shcema in SQLite
+	- Realize the relational schema in SQLite
 	- Extract and transform the data from the XML and then load into the appropriate 
 		tables in the database
 	- Write queries  to populate a fictitious dashboard that would allow an analyst to explore 
